@@ -18,7 +18,9 @@ class Protocol:
     DECLINE_CHALLENGE = 0xa
     SPECTATE = 0x10
     CANCEL_CHALLENGE = 0x1c
+    EXTENSION_OUTBOUND = 0x1d
     # OUT OF BAND
+    EXTENSION_INBOUND = 0xffffffed
     CHALLENGE_RETRACTED = 0xffffffef
     SPECTATE_GRANTED = 0xfffffffa
     CHALLENGE_DECLINED = 0xfffffffb
@@ -41,6 +43,8 @@ class Protocol:
         0xa: 'DECLINE_CHALLENGE',
         0x10: 'SPECTATE',
         0x1c: 'CANCEL_CHALLENGE',
+        0x1d: 'EXTENSION_OUTBOUND',
+        0xffffffed: 'EXTENSION_INBOUND',
         0xffffffef: 'CHALLENGE_RETRACTED',
         0xfffffffa: 'SPECTATE_GRANTED',
         0xfffffffb: 'CHALLENGE_DECLINED',
@@ -51,6 +55,7 @@ class Protocol:
     }
 
     OutOfBandReverseMap = {
+        0xffffffed: 'EXTENSION_INBOUND',
         0xffffffef: 'CHALLENGE_RETRACTED',
         0xfffffffa: 'SPECTATE_GRANTED',
         0xfffffffb: 'CHALLENGE_DECLINED',

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from collections import OrderedDict
-
+from ggpo.common.extensions.extension import Extension
 
 # noinspection PyClassHasNoInit
 class CLI:
@@ -172,6 +172,9 @@ class CLI:
                     callback(words[1])
                 else:
                     callback()
+        elif Extension.tryParseCommand(command, words[1]):
+            pass
+
         else:
             clihelp()
 

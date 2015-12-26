@@ -22,7 +22,8 @@ class PlayerModel(QtCore.QAbstractTableModel):
     IGNORE = 5
     COUNTRY = 6
     OPPONENT_COUNTRY = 7
-    N_COLS = 8
+    COLOR = 8
+    N_COLS = 9
 
     DEFAULT_SORT = PLAYER
 
@@ -83,6 +84,8 @@ class PlayerModel(QtCore.QAbstractTableModel):
         elif role == Qt.TextAlignmentRole:
             if col == PlayerModel.PING or col==PlayerModel.SPECTATORS:
                 return Qt.AlignRight | Qt.AlignVCenter
+        elif role == Qt.ForegroundRole:
+            return self.players[row][PlayerModel.COLOR]
 
     def dataIcon(self, row, col):
         icon_path = None
@@ -187,7 +190,8 @@ class PlayerModel(QtCore.QAbstractTableModel):
             self.players.append([PlayerModelState.AVAILABLE,
                                  p, self.getPlayerStat(p, 'ping'),
                                  '', '', ignored,
-                                 self.getPlayerStat(p, 'cc'), ''])
+                                 self.getPlayerStat(p, 'cc'), '',
+                                 self.getPlayerStat(p, 'color')])
         for p, p2 in self.controller.playing.items():
             ignored = (p in self.controller.ignored) and Qt.Checked or Qt.Unchecked
             self.players.append([PlayerModelState.PLAYING,
@@ -196,13 +200,15 @@ class PlayerModel(QtCore.QAbstractTableModel):
                                  self.getPlayerStat(p, 'spectators'),
                                  ignored,
                                  self.getPlayerStat(p, 'cc'),
-                                 self.getPlayerStat(p2, 'cc')])
+                                 self.getPlayerStat(p2, 'cc'),
+                                 self.getPlayerStat(p, 'color')])
         for p in self.controller.awayfromkb.keys():
             ignored = (p in self.controller.ignored) and Qt.Checked or Qt.Unchecked
             self.players.append([PlayerModelState.AFK,
                                  p, self.getPlayerStat(p, 'ping'),
                                  '', '', ignored,
-                                 self.getPlayerStat(p, 'cc'), ''])
+                                 self.getPlayerStat(p, 'cc'), '',
+                                 self.getPlayerStat(p, 'color')])
         self.sort(self.lastSort, self.lastSortOrder)
         # idx1 = self.createIndex(0, 0)
         # idx2 = self.createIndex(len(self.players) - 1, PlayerModel.N_DISPLAY_COLS-1)

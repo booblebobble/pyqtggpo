@@ -14,5 +14,6 @@ class Player:
         self.ping = ''
         self.lastPingTime = 0
         self.loc = ''
+        self.color = None
         self.spectators = 0
         vars(self).update(kwargs)

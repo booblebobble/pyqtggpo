@@ -26,6 +26,7 @@ from ggpo.gui.emoticonsdialog import EmoticonDialog
 from ggpo.gui.playermodel import PlayerModel
 from ggpo.gui.savestatesdialog import SavestatesDialog
 from ggpo.gui.ui.ggpowindow_ui import Ui_MainWindow
+from ggpo.common.extensions.extension import Extension
 
 # re-implement the QTreeWidgetItem
 class TreeWidgetItem(QtGui.QTreeWidgetItem):
@@ -272,6 +273,8 @@ class GGPOWindow(QtGui.QMainWindow, Ui_MainWindow):
                 quark = "quark:stream,"+channel+","+replay_id+",7001"
                 self.controller.runFBA(quark)
                 self.controller.sigStatusMessage.emit("Replaying game-id {}@{}".format(replay_id, channel))
+            elif qurl.scheme() == "extension":
+                Extension.processAnchorClick(qurl.path())
 
     def onRemoteHasUpdates(self, added, updated, nochange):
         totalchanged = added + updated
@@ -622,6 +625,8 @@ class GGPOWindow(QtGui.QMainWindow, Ui_MainWindow):
         controller.sigStatusMessage.connect(self.onStatusMessage)
         controller.sigServerDisconnected.connect(
             lambda: self.onStatusMessage("Disconnected from server. Please restart application"))
+
+        Extension.Initialize(self)
 
     def setCustomEmoticons(self):
         dlg = CustomEmoticonsDialog(self)

@@ -9,10 +9,12 @@ import struct
 import select
 import errno
 import fileinput
+import threading
+import calendar
 from shutil import copyfile
 from random import randint
 from subprocess import Popen
-from PyQt4 import QtCore
+from PyQt4 import QtCore, QtGui
 from ggpo.common.runtime import *
 from ggpo.common.geolookup import geolookup, isUnknownCountryCode
 from ggpo.common.player import Player
@@ -23,6 +25,7 @@ from ggpo.common.unsupportedsavestates import readLocalJsonDigest
 from ggpo.common.util import findFba, logdebug, loguser, packagePathJoin, findGamesavesDir, sha256digest
 from ggpo.gui.colortheme import ColorTheme
 from ggpo.common import copyright
+from ggpo.common.extensions.extension import Extension
 
 
 class Controller(QtCore.QObject):
@@ -80,6 +83,7 @@ class Controller(QtCore.QObject):
         self.unsupportedRom = ''
         self.checkUnsupportedRom()
         self.playingagainst = ''
+        self.side = 0  # if currently playing, 1 or 2 if we are player 1 or player 2
 
         self.challengers = set()
         self.challenged = None
@@ -91,6 +95,13 @@ class Controller(QtCore.QObject):
         self.awayfromkb = {}
         self.ignored = Settings.pythonValue(Settings.IGNORED) or set()
         self.sigStatusMessage.connect(logdebug().info)
+
+        tmp = calendar.timegm(time.localtime()) - calendar.timegm(time.gmtime())
+        self.utcoffset = tmp if tmp > 0 else 24*60*60 - tmp  # packInt can't do negative numbers.
+        self.os = 1 if IS_WINDOWS else (2 if IS_LINUX else (3 if IS_OSX else 0))
+
+        self.sendLock = threading.Lock()  # Protect self.sequence/self.tcpCommandsWaitingForResponse in sync if extensions
+                                          # send messages from different threads.
 
     def addIgnore(self, name):
         if name != self.username:
@@ -106,7 +117,7 @@ class Controller(QtCore.QObject):
             if name in self.players:
                 p = self.players[name]
                 for k, v in kwargs.items():
-                    if v and not (k == 'cc' and isUnknownCountryCode(v)):
+                    if (v and not (k == 'cc' and isUnknownCountryCode(v))) or (k == 'color'):
                         setattr(p, k, v)
             else:
                 p = Player(**kwargs)
@@ -216,6 +227,8 @@ class Controller(QtCore.QObject):
             self.parseJoinChannelResponse(data)
         elif seq == Protocol.SPECTATE_GRANTED:
             self.parseSpectateResponse(data)
+        elif seq == Protocol.EXTENSION_INBOUND:
+            Extension.parseMessage(data)
         else:
             # in band response to our previous request
             self.dispatchInbandData(seq, data)
@@ -242,7 +255,7 @@ class Controller(QtCore.QObject):
                 self.sigStatusMessage.emit("Fail to spectate " + str(status))
         elif origRequest in [Protocol.WELCOME, Protocol.JOIN_CHANNEL, Protocol.TOGGLE_AFK,
                              Protocol.SEND_CHALLENGE, Protocol.CHAT, Protocol.ACCEPT_CHALLENGE,
-                             Protocol.DECLINE_CHALLENGE, Protocol.CANCEL_CHALLENGE]:
+                             Protocol.DECLINE_CHALLENGE, Protocol.CANCEL_CHALLENGE, Protocol.EXTENSION_OUTBOUND]:
             if len(data) == 4:
                 status, data = Protocol.extractInt(data)
                 if status != 0:
@@ -287,12 +300,15 @@ class Controller(QtCore.QObject):
             country, data = Protocol.extractTLV(data)
             # \x00\x00\x17y
             marker, data = Protocol.extractInt(data)
+            color, data = Protocol.extractInt(data)
+            color = None if color >= 0x1000000 else QtGui.QColor((color & 0xFF0000) >> 16, (color & 0xFF00) >> 8, color & 0xFF)
             playerinfo = dict(
                 player=p1,
                 ip=ip,
                 city=city,
                 cc=cc,
                 country=country,
+                color=color,
                 spectators=0,
             )
             return state, p1, p2, playerinfo, data
@@ -519,6 +535,8 @@ class Controller(QtCore.QObject):
                 cc = cc.lower()
             country, data = Protocol.extractTLV(data)
             port, data = Protocol.extractInt(data)
+            color, data = Protocol.extractInt(data)
+            color = None if color >= 0x1000000 else QtGui.QColor((color & 0xFF0000) >> 16, (color & 0xFF00) >> 8, color & 0xFF)
             spectators, data = Protocol.extractInt(data)
             self.addUser(
                 player=p1,
@@ -527,6 +545,7 @@ class Controller(QtCore.QObject):
                 city=city,
                 cc=cc,
                 country=country,
+                color=color,
                 spectators=spectators+1,
             )
             if state == PlayerStates.AVAILABLE:
@@ -610,19 +629,23 @@ class Controller(QtCore.QObject):
                 self.parsePlayerStartGameResponse(p1, p2, playerinfo)
                 if self.username == p1:
                     self.playingagainst = p2
+                    self.side = 1
                 if self.username == p2:
                     self.playingagainst = p1
+                    self.side = 2
                 if Settings.value(Settings.USER_LOG_PLAYHISTORY) and self.username in [p1, p2]:
                     loguser().info(u"[IN A GAME] {} vs {}".format(p1, p2))
             elif state == PlayerStates.AVAILABLE:
                 self.parsePlayerAvailableResponse(p1, playerinfo)
                 if self.playingagainst == p1:
                     self.playingagainst = ''
+                    self.side = 0
                     self.killEmulator()
             elif state == PlayerStates.AFK:
                 self.parsePlayerAFKResponse(p1, playerinfo)
                 if self.playingagainst == p1:
                     self.playingagainst = ''
+                    self.side = 0
                     self.killEmulator()
             elif state == PlayerStates.QUIT:
                 self.parsePlayerLeftResponse(p1)
@@ -688,6 +711,9 @@ class Controller(QtCore.QObject):
 
     # platform independent way of playing an external wave file
     def playChallengeSound(self):
+        # DEBUG
+        return
+
         if not self.fba:
             return
         wavfile = os.path.join(os.path.dirname(self.fba), "assets", "sf2-challenge.wav")
@@ -886,13 +912,15 @@ class Controller(QtCore.QObject):
             self.challengers.remove(name)
 
     def sendAndForget(self, command, data=''):
-        logdebug().info('Sending {} seq {} {}'.format(Protocol.codeToString(command), self.sequence, repr(data)))
-        self.sendtcp(struct.pack('!I', command) + data)
+        with self.sendLock:  # extensions may send messages from separate threads
+            logdebug().info('Sending {} seq {} {}'.format(Protocol.codeToString(command), self.sequence, repr(data)))
+            self.sendtcp(struct.pack('!I', command) + data)
 
     def sendAndRemember(self, command, data=''):
-        logdebug().info('Sending {} seq {} {}'.format(Protocol.codeToString(command), self.sequence, repr(data)))
-        self.tcpCommandsWaitingForResponse[self.sequence] = command
-        self.sendtcp(struct.pack('!I', command) + data)
+        with self.sendLock:  # extensions may send messages from separate threads
+            logdebug().info('Sending {} seq {} {}'.format(Protocol.codeToString(command), self.sequence, repr(data)))
+            self.tcpCommandsWaitingForResponse[self.sequence] = command
+            self.sendtcp(struct.pack('!I', command) + data)
 
     def sendAuth(self, username, password):
         self.username = username
@@ -901,7 +929,14 @@ class Controller(QtCore.QObject):
         except:
             port=6009
             #raise
-        authdata = Protocol.packTLV(username) + Protocol.packTLV(password) + Protocol.packInt(port) + Protocol.packInt(copyright.versionNum())
+
+        # piggyback the OS and timezone onto the login request since there doesn't seem to be another convenient place to send it.
+        authdata = Protocol.packTLV(username) + Protocol.packTLV(password) + Protocol.packInt(port) + \
+                   Protocol.packInt(copyright.versionNum()) + \
+                   Protocol.packInt(self.os) + \
+                   Protocol.packTLV(str(self.utcoffset))  # There's a string conversion error here if packInt returns any
+                   #Protocol.packInt(self.utcoffset)      # non-ascii bytes.  Send utcoffset as a string for now.
+
         self.sendAndRemember(Protocol.AUTH, authdata)
 
     def sendCancelChallenge(self, name=None):
@@ -1047,3 +1082,5 @@ class Controller(QtCore.QObject):
     def updatePlayerPing(self, name, ping):
         if name in self.players:
             self.players[name].ping = ping
+#            # DEBUG
+#            self.players[name].ping = 15*abs(ord(self.username[0]) - ord(name[0]))
