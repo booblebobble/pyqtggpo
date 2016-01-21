@@ -341,7 +341,8 @@ class _Extension(QtCore.QObject):
         values = None
         formatStrings = [None, "<B", "<H", None, "<L"]  # for struct.unpack
 
-        while ctypes.windll.user32.IsWindow(self._gamehwnd) and self._controller.playingagainst != '':
+        processAlive = ctypes.c_ulong(259) # 259 = STILL_ACTIVE, https://msdn.microsoft.com/en-us/library/ms683189%28VS.85%29.aspx
+        while processAlive.value == 259 and self._controller.playingagainst != '':
             lvalues = values
             values = []
 
@@ -376,6 +377,7 @@ class _Extension(QtCore.QObject):
 
             time.sleep(_READ_LOOP_DELAY)
 
+            ctypes.windll.kernel32.GetExitCodeProcess(self._hProcess, ctypes.byref(processAlive))
 
     # noinspection PyMethodMayBeStatic
     def _scanProcessMemoryForString(self, hProcess, searchString):
